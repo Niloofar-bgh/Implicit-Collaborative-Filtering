@@ -1,2 +1,2 @@
 # SteamRecommenderSystem 
-Implementation of Implicit Recommendation Algorithm
+Implementation of Recommendation Algorithms for Implicit Rating Dataset
