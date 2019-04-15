@@ -2,7 +2,7 @@ from pyspark.sql import SparkSession
 import pyspark.mllib.linalg.distributed  as LAD
 
 
-path = "C:\\Users\\hamid\\PycharmProjects\\bigdata-game-recommender\\data\\steam_data_w_game_id.csv"
+path = "C:\\Users\\hamid\\PycharmProjects\\bigdata-game-recommender\\data\\steam_data_sample.csv"
 #path = "C:\\Users\\hamid\\PycharmProjects\\bigdata-game-recommender\\data\\data_test2.csv"
 ########################## Loading Data ###########################
 spark = SparkSession \
@@ -90,15 +90,16 @@ def get_game_user_matrix(rdd, all_users):
 
 def get_similarity_matrix(game_user_matrix):
     #Note:result is based on coordinate instead of game_ID
-    iu_matrix = LAD.IndexedRowMatrix(game_user_mat)
+    iu_matrix = LAD.IndexedRowMatrix(game_user_matrix)
     iu_matrix = iu_matrix.toBlockMatrix().transpose().toIndexedRowMatrix()
     sim_matrix = iu_matrix.columnSimilarities()
     sim = sim_matrix.entries.map(lambda l: ((l.i, l.j), l.value) )
     return sim
-    #print(sim_co.take(10))
-    # sim_matrix = sim_matrix.toBlockMatrix()
-    # sim = sim_matrix.toLocalMatrix().toArray()
-    # tran_sim = sim_matrix.transpose().toLocalMatrix().toArray()
+    #sim_matrix = sim_matrix.toBlockMatrix()
+    #sim = sim_matrix.toLocalMatrix().toArray()
+    #tran_sim = sim_matrix.transpose().toLocalMatrix().toArray()
+    #print(tran_sim)
+
 
 def get_recommended_user_vector(game_user_mat,game,similar_game):
     game_user = game_user_mat.filter(lambda l: l[0] == game).take(1)
@@ -115,13 +116,19 @@ def get_recommended_user_vector(game_user_mat,game,similar_game):
         return rec_user_vector
 
     rec = sync_games(game_user[0][1], sim_game_user[0][1])
-    print(rec)
+    #print(rec)
     return rec
 
 data = get_data(path)
 data.cache()
+
+# two different way of normalization
 data_norm = normalize_data(data)
+#data_norm = normalize_data_by_game(data)
+
 data.cache()
+
+print(data_norm.take(30))
 training, test = get_training_test(data_norm)
 training.cache()
 test.cache()
@@ -130,11 +137,16 @@ users = training.map(lambda l: l[1][0]).distinct().collect()
 users = sorted(users)
 #print(users)
 game_user_mat = get_game_user_matrix(training,users)
+#print(game_user_mat.take(10))
 game_user_mat.cache()
 games = game_user_mat.keys().collect()
 #print(games)
 
-sim_mat = get_similarity_matrix(game_user_mat).collect()
+index_game_user = game_user_mat.zipWithIndex()
+index_game_user = index_game_user.map(lambda l: (l[1],l[0][1]))
+#print(index_game_user.take(10))
+
+sim_mat = get_similarity_matrix(index_game_user).collect()
 sim_mat = dict(sim_mat)
 #print(sim_mat)
 
@@ -145,56 +157,80 @@ game_user = dict(game_user_mat)
 def get_similar_games( game):
     # m is number of similar games that should be concidered
     sim_games = []
-    g_index = games.index(game)
-    res1 = [((k1,_), v) for (k1, _), v in sim_mat.items() if k1 == g_index]
-    res2 = [((_,k2), v) for (_, k2), v in sim_mat.items() if k2 == g_index]
-    sims = res1 + res2
-    sims = dict(sims)
-    #print(sims)
+    if (game in games):
+        g_index = games.index(game)
+        res1 = [((k1,_), v) for (k1, _), v in sim_mat.items() if k1 == g_index]
+        res2 = [((_,k2), v) for (_, k2), v in sim_mat.items() if k2 == g_index]
+        sims = res1 + res2
+        sims = dict(sims)
+        #print("game:")
+        #print(game)
+        #print(g_index)
+        def get_game_from_coordinate(i,j):
+            #print("i,j")
+            #print(i)
+            #print(",")
+            #print (j)
+            res = -1
+            if (i == g_index):
+                res = games[j]
+            else:
+                res = games[i]
+            return res
 
-    def get_game_from_coordinate(i,j):
-        res = -1
-        if (i == g_index):
-            res = games[j]
-        else:
-            res = games[i]
-        return res
-
-    for key, value in sorted(sims.items(), key=lambda item: item[1], reverse = True):
-        if (value > 0):
-            game = get_game_from_coordinate(key[0], key[1])
-            sim_games.append((game, value))
-    #print("sim-games")
-    #print(sim_games)
+        for key, value in sorted(sims.items(), key=lambda item: item[1], reverse = True):
+            if (value > 0):
+                game = get_game_from_coordinate(key[0], key[1])
+                sim_games.append((game, value))
+        #print("sim-games")
+        #print(sim_games)
     return sim_games
 
 
 def get_rec_rate(game, user):
-    sim_games = get_similar_games(game)[:5]
-    u_index = users.index(user)
-
-    nominator = 0
-    dinom = 0
-    for sg in sim_games:
-        user_vec = game_user.get(sg[0])
-        #print(user_vec)
-        r = user_vec[u_index]
-        nominator += (r * sg[1])
-        dinom += sg[1]
-
-    if (dinom == 0):
+    sim_games = get_similar_games(game)
+    if (len(sim_games) == 0):
         return 0
+
+    if (user in users):
+        u_index = users.index(user)
+
+        most_sim = sim_games[:5]
+        nominator = 0
+        dinom = 0
+        for sg in most_sim:
+            user_vec = game_user.get(sg[0])
+            #print(user_vec)
+            r = user_vec[u_index]
+            nominator += (r * sg[1])
+            dinom += sg[1]
+
+        if (dinom == 0):
+            return 0
+        else:
+            return nominator/dinom
     else:
-        return nominator/dinom
+        return 0
 
 rec = test.map(lambda l:(l[0], l[1], get_rec_rate(l[0], l[1][0])))
+#print("test_recommended")
 #print(rec.take(10))
 
 def get_error_d(r1,r2):
-    return (r1 - r2) ** 2
+    return round((r1 - r2) ** 2, 5)
 
-error = rec.map(lambda l: (0, get_error_d(l[1][1] ,l[2])))\
-    .reduceByKey(lambda x,y: x+y).collect()
-rmse = error[0][1] ** 1/2
+error = rec.map(lambda l: (0, (get_error_d(l[1][1] ,l[2]),1)))
+error.cache()
+#print("error:")
+#print(error.take(10))
+#total_num = error.count()
+#print("total-n")
+#print(total_num)
+error = error.reduceByKey(lambda x,y: (x[0]+y[0], x[1]+y[1]))
+#print(error.take(10))
+
+error = error.collect()
+#print(error)
+rmse = (error[0][1][0] ** 1/2)/error[0][1][1]
 print("rmse:")
 print(rmse)
