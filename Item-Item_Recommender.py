@@ -3,7 +3,7 @@ import pyspark.mllib.linalg.distributed  as LAD
 
 
 path = "C:\\Users\\hamid\\PycharmProjects\\bigdata-game-recommender\\data\\steam_data_w_game_id.csv"
-#path = "C:\\Users\\hamid\\PycharmProjects\\bigdata-game-recommender\\data\\data_test.csv"
+#path = "C:\\Users\\hamid\\PycharmProjects\\bigdata-game-recommender\\data\\data_test2.csv"
 ########################## Loading Data ###########################
 spark = SparkSession \
         .builder \
@@ -188,5 +188,13 @@ def get_rec_rate(game, user):
         return nominator/dinom
 
 rec = test.map(lambda l:(l[0], l[1], get_rec_rate(l[0], l[1][0])))
-print(rec.take(10))
+#print(rec.take(10))
 
+def get_error_d(r1,r2):
+    return (r1 - r2) ** 2
+
+error = rec.map(lambda l: (0, get_error_d(l[1][1] ,l[2])))\
+    .reduceByKey(lambda x,y: x+y).collect()
+rmse = error[0][1] ** 1/2
+print("rmse:")
+print(rmse)
