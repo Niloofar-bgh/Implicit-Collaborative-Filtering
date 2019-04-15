@@ -1,10 +1,9 @@
-
 from pyspark.sql import SparkSession
 import pyspark.mllib.linalg.distributed  as LAD
 
 
 path = "C:\\Users\\hamid\\PycharmProjects\\bigdata-game-recommender\\data\\steam_data_w_game_id.csv"
-
+#path = "C:\\Users\\hamid\\PycharmProjects\\bigdata-game-recommender\\data\\data_test.csv"
 ########################## Loading Data ###########################
 spark = SparkSession \
         .builder \
@@ -20,11 +19,28 @@ def abs(a):
 
 def get_data(file_name):
     rdd = spark.read.csv(file_name, header =True).rdd
-    rdd = rdd.map(lambda l: (int(l['Game ID']), (int(l['User ID']),float(l['Hours Played']))))
+    rdd = rdd.map(lambda l: (int(l['Game ID']), (int(l['User ID']),float(l['Hours Played']))))\
+        .filter(lambda l: l[1][1] < 5000)
+
     #print(rdd.take(10))
     return rdd
 
 def normalize_data(rdd):
+    mean_rdd = rdd.map(lambda l: (0,(l[1][1], 1)))\
+        .reduceByKey(lambda x,y:(x[0]+y[0], x[1]+y[1]))\
+        .map(lambda l: l[1][0]/l[1][1]).collect()
+    #print(mean_rdd)
+    mean_rdd = mean_rdd[0]
+    def normalize(x,m):
+        s = (x - m) ** 2
+        if (s == 0):
+            return 0
+        return (x - m) /s
+    rdd_norm = rdd.mapValues(lambda l: (l[0], normalize(l[1], mean_rdd)))
+    #print(rdd_norm.take(15))
+    return rdd_norm
+
+def normalize_data_by_game(rdd):
     #calculate mean per game
     mean_rdd = rdd.mapValues(lambda l: (l[1], 1))\
         .reduceByKey(lambda x,y: (x[0]+y[0], x[1]+y[1]))\
@@ -37,7 +53,7 @@ def normalize_data(rdd):
     #calculate stdev per game
     stdev_rdd = rdd_meanInc.mapValues(lambda l: (((l[0][1]-l[1]) ** 2), 1))\
         .reduceByKey(lambda x,y: (x[0]+y[0], x[1]+y[1]))\
-        .mapValues(lambda l: (l[0]/(l[1])) ** 1/2) #l[1]-1 
+        .mapValues(lambda l: (l[0]/(l[1])) ** 1/2) #l[1]-1
     #print(stdev_rdd.take(10))
     rdd_mean_std = rdd_meanInc.join(stdev_rdd)
     #print(rdd_mean_std.take(10))
@@ -173,3 +189,4 @@ def get_rec_rate(game, user):
 
 rec = test.map(lambda l:(l[0], l[1], get_rec_rate(l[0], l[1][0])))
 print(rec.take(10))
+
